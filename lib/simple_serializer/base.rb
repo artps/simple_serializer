@@ -2,32 +2,54 @@ module SimpleSerializer
 
   class Base
 
+    class_attribute :_attributes
+    self._attributes = {}
+
+    class_attribute :_associations
+    self._associations = {}
+
     class << self
 
-      def attribute(*attrs)
-        options = attrs.extract_options!
+      def attribute(name, options = {})
+        self._attributes = _attributes.merge(name => options)
+      end
 
-        if attrs.size == 0 && options.present?
-          attr = attrs.shift
-          attributes << attr
-          synonyms[attr] = options[:as]
-        else
-          attrs.map do |attr|
-            attributes << attr
-          end
+      def attributes(*attrs)
+        self._attributes = _attributes.dup
+
+        attrs.each do |attr|
+          attribute(attr)
         end
       end
 
-      def attributes
-        @attributes ||= []
-      end
-
-      def synonyms
-        @synonyms ||= {}
-      end
-
       def serialize(array)
-        ArraySerializer.new(array, self)
+        if array.respond_to?(:to_ary)
+          ArraySerializer.new(array, self)
+        else
+          new(array).as_json
+        end
+      end
+
+      def associate(klass, name, *args)
+        serializer, options = process_args(*args)
+        self._associations = _associations.dup
+        self._associations[name] = klass
+        attribute(name, options.merge(serializer: serializer))
+      end
+
+      def has_many(name, *args)
+        associate(Associations::HasMany, name, *args)
+      end
+
+      def has_one(name, *args)
+        associate(Associations::HasOne, name, *args)
+      end
+
+      def process_args(*args)
+        options = args.extract_options!
+        serializer = args.shift # TODO: try to get default serializer. For example, has_many :educations → EducationSerializer
+
+        [serializer, options]
       end
 
     end
@@ -38,24 +60,35 @@ module SimpleSerializer
 
     attr_reader :model
 
-    def to_json
+    def as_json
       serialize_model(model)
     end
 
     private
 
     def serialize_model(model)
-      Hash[self.class.attributes.map do |attr|
-        json_attr_name = self.class.synonyms.fetch(attr, attr)
+      Hash[_attributes.map do |(attr, options)|
+        [(options[:as] || attr), calculate_attribute_value(attr, options[:serializer])]
+      end]
+    end
 
-        value = if respond_to?(attr)
-          send(attr)
+    def calculate_attribute_value(name, serializer)
+      if _associations.has_key?(name)
+        klass = _associations[name]
+        relation = model.try(name)
+
+        method = if klass.has_many?
+          :serialize
         else
-          model.send(attr)
+          :new
         end
 
-        [json_attr_name, value]
-      end]
+        serializer.send(method, relation).as_json
+      elsif respond_to?(name)
+        send(name)
+      else
+        model.send(name)
+      end
     end
 
   end

@@ -7,9 +7,9 @@ module SimpleSerializer
       @klass = klass
     end
 
-    def to_json
+    def as_json
       @array.map do |model|
-        @klass.new(model).to_json
+        @klass.new(model).as_json
       end
     end
 
